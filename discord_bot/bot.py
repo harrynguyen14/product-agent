@@ -19,7 +19,7 @@ from discord_bot.formatters import (
     format_error,
     split_message,
 )
-from discord_bot.review_gate import DiscordReviewGate
+from discord_bot.review_gate import DiscordReviewGate, RoleReviewGate
 from discord_bot.webhook_manager import WebhookManager
 from flows.planning_flow import PlanningFlow
 from infrastructure.logging import get_logger
@@ -60,6 +60,7 @@ class ChatSession:
     guild_id: int
     main_channel_id: int
     review_gate: DiscordReviewGate = field(default_factory=DiscordReviewGate)
+    role_review_gate: RoleReviewGate = field(default_factory=RoleReviewGate)
     active_task: Optional[TaskSession] = None
     runner: Optional[DiscordEnvironmentRunner] = None
 
@@ -158,6 +159,13 @@ class DiscordBot(commands.Bot):
         # --- Review gate: user replying to a plan ---
         if session.review_gate.is_armed:
             session.review_gate.resolve(content)
+            return
+
+        # --- Role review gate: user reviewing a completed role ---
+        if (session.role_review_gate.is_armed
+                and session.active_task
+                and channel.id == session.active_task.task_channel_id):
+            session.role_review_gate.resolve(content)
             return
 
         # --- Task channel: user talking to PM ---
@@ -260,13 +268,21 @@ class DiscordBot(commands.Bot):
     ) -> None:
         task = session.active_task
         runner = session.runner
+        gate = session.role_review_gate
+
+        # Accumulated human feedback injected into the next role's context
+        pending_feedback: str = ""
+
+        # Roles that are internal coordinators — skip human review for these
+        SKIP_REVIEW_ROLES = {"ProductManager", "ProjectDeveloper", "APP"}
 
         await self._webhooks.send(
             task_channel,
             "APP",
             f"🚀 **Bắt đầu thực thi**\n"
             f"📋 {task.requirement[:200]}\n"
-            f"👥 Roles: {', '.join(task.roles)}",
+            f"👥 Roles: {', '.join(task.roles)}\n\n"
+            f"💬 Sau mỗi role hoàn thành, hãy reply `ok` để tiếp tục hoặc nhập feedback.",
         )
 
         try:
@@ -279,14 +295,35 @@ class DiscordBot(commands.Bot):
 
                 if etype == "role_start":
                     role = event.get("role", "")
-                    await self._webhooks.send(
-                        task_channel, role, format_thinking(role)
-                    )
+                    msg = format_thinking(role)
+                    if pending_feedback and role not in SKIP_REVIEW_ROLES:
+                        msg += f"\n\n> 💬 *Feedback từ user: {pending_feedback}*"
+                        pending_feedback = ""
+                    await self._webhooks.send(task_channel, role, msg)
 
                 elif etype == "role_done":
                     role = event.get("role", "")
                     output = event.get("output", "")
                     await self._webhooks.send(task_channel, role, output)
+
+                    # Pause for human review (skip internal coordinator roles)
+                    if role not in SKIP_REVIEW_ROLES:
+                        gate.arm()
+                        await task_channel.send(
+                            f"⏸️ **{role}** vừa hoàn thành.\n"
+                            f"Reply `ok` để tiếp tục, hoặc nhập feedback để role tiếp theo biết."
+                        )
+                        try:
+                            accepted, feedback = await gate.wait(timeout=300)
+                            if feedback:
+                                pending_feedback = feedback
+                                await task_channel.send(
+                                    f"📝 *Đã ghi nhận feedback. Chuyển sang bước tiếp theo...*"
+                                )
+                            else:
+                                await task_channel.send(f"✅ *Tiếp tục...*")
+                        except Exception:
+                            await task_channel.send(f"⏭️ *Timeout — tự động tiếp tục...*")
 
                 elif etype == "pm_review":
                     output = event.get("output", "")
@@ -310,7 +347,6 @@ class DiscordBot(commands.Bot):
                     await self._webhooks.send(
                         task_channel, "APP", f"✅ **Hoàn thành!**\n\n{summary}"
                     )
-                    # Post token usage report to task channel
                     token_report = event.get("token_report", "")
                     if token_report:
                         await self._webhooks.send(task_channel, "APP", token_report)

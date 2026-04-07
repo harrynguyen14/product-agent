@@ -28,8 +28,7 @@ product-multi-agent/
 │
 ├── config/
 │   ├── settings.py             # AppConfig (pydantic-settings, env prefix MA_)
-│   ├── provider_config.py      # LLMProvider enum + per-provider model/key fields
-│   └── optional/               # Optional feature configs
+│   └── provider_config.py      # LLMProvider enum + per-provider model/key fields
 │
 ├── core/
 │   ├── runner.py               # EnvironmentRunner — CLI pipeline entrypoint
@@ -63,7 +62,7 @@ product-multi-agent/
 │   ├── channel_manager.py      # Creates/manages task channels per requirement
 │   ├── webhook_manager.py      # Per-agent webhook identity (username + avatar)
 │   ├── formatters.py           # Message formatting helpers
-│   └── review_gate.py          # Pauses flow to wait for user approval in Discord
+│   └── review_gate.py          # DiscordReviewGate (plan approval) + RoleReviewGate (per-role human review)
 │
 ├── telegram_bot/
 │   ├── bot.py                  # Telegram bot — message handlers
@@ -92,12 +91,6 @@ product-multi-agent/
 │   ├── action_graph.py         # Directed action graph
 │   ├── action_node.py          # Single action node
 │   └── react_loop.py           # ReAct (Reason + Act) execution loop
-│
-├── flows/                      # (see above)
-│
-├── execution/
-│   ├── task_runner.py          # Runs a single task with retry logic
-│   └── registry.py             # Maps task types to executors
 │
 ├── plan/
 │   ├── planer.py               # Planner logic — generates structured plan
@@ -223,6 +216,11 @@ Override model at runtime: `--model gemini-3.1-flash-lite-preview`
 
 1. Invite the bot to your server
 2. Send a message in the configured main channel describing your requirement
-3. Bot creates a dedicated task channel and runs the full product flow
-4. Each agent posts under its own identity (webhook)
-5. PM asks for your approval before proceeding past the planning phase
+3. Bot generates a plan and asks for your approval (`yes` / feedback)
+4. On approval, bot creates a dedicated task channel and starts execution
+5. Each agent posts under its own identity (webhook)
+6. **After each role completes**, bot pauses and asks for your review:
+   - Reply `ok` / `yes` / `tiếp tục` → move to next step
+   - Reply with feedback → injected into the next role's context
+   - No reply within 5 minutes → auto-continue
+7. PM tags you in the main channel when the full flow is complete

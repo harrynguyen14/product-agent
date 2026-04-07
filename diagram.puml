@@ -1,0 +1,742 @@
+@startuml multi-agent-system
+
+' ============================================================
+' THEME & LAYOUT
+' ============================================================
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 60
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 11
+
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #555555
+  HeaderBackgroundColor #2C3E50
+  HeaderFontColor #FFFFFF
+  HeaderFontSize 12
+  ArrowColor #555555
+}
+skinparam package {
+  BackgroundColor #F0F4F8
+  BorderColor #888888
+  FontSize 12
+  FontStyle bold
+}
+skinparam note {
+  BackgroundColor #FFF9C4
+  BorderColor #F9A825
+}
+
+' ============================================================
+' PACKAGE: config
+' ============================================================
+package "config" {
+
+  enum LLMProvider {
+    anthropic
+    openai
+    gemini
+    ollama
+    lmstudio
+  }
+
+  class AppConfig {
+    + llm_provider: LLMProvider
+    + anthropic_model: str
+    + openai_model: str
+    + gemini_model: str
+    + ollama_base_url: str
+    + ollama_model: str
+    + lmstudio_base_url: str
+    + lmstudio_model: str
+    + max_retries: int
+    + temperature: float
+    + max_tokens: int
+    + needs_writing: bool
+    + streaming_enabled: bool
+    + log_level: str
+    + log_format: str
+    + db_path: str
+    + serpapi_api_key: str
+    + qdrant_path: str
+    + qdrant_collection: str
+    + qdrant_embedding_model: str
+    + qdrant_rerank_top_n: int
+    + mcp_config_file: Optional[str]
+    + mcp_servers: Optional[dict]
+    + mcp_enabled: bool
+    + skill_names: Optional[list[str]]
+    + skills_enabled: bool
+    --
+    + get_active_model() : str
+  }
+
+  note bottom of AppConfig
+    Factory: get_config() → AppConfig
+    Factory: get_llm(config) → BaseChatModel
+  end note
+
+  AppConfig --> LLMProvider
+}
+
+' ============================================================
+' PACKAGE: schemas
+' ============================================================
+package "schemas" {
+
+  class GraphState << (T,orchid) TypedDict >> {
+    + user_problem: str
+    + desired_output: Optional[str]
+    + needs_clarification: bool
+    + clarification_question: Optional[str]
+    + plan: Optional[PlanningOutput]
+    + pending_tasks: list[Task]
+    + current_task: Optional[Task]
+    + completed_tasks: Annotated[list[Task], add]
+    + rag_output: Optional[RAGOutput]
+    + mcp_output: Optional[MCPOutput]
+    + summary_output: Optional[SummaryOutput]
+    + validation_output: Optional[ValidationOutput]
+    + admin_output: Optional[AdminOutput]
+    + report_output: Optional[WritingOutput]
+    + assign_output: Optional[AssignTaskOutput]
+    + needs_assignment: bool
+    + data_available: bool
+    + needs_report: bool
+    + retry_count: int
+    + max_retries: int
+    + admin_retry_count: int
+    + max_admin_retries: int
+    + all_retrieved_data: Annotated[list, add]
+    + all_insights: Annotated[list, add]
+    + workflow_trace: Annotated[list[dict], add]
+    + error: Optional[str]
+    + current_phase: Literal[...]
+  }
+
+  ' --- Task ---
+  enum TaskType {
+    research
+    collect_data
+    skills
+    tools
+    rag
+    mcp
+  }
+
+  class Task {
+    + id: str
+    + instruction: str
+    + task_type: TaskType
+    + priority: str
+    + dependent_task_ids: list[str]
+    --
+    + type : TaskType
+    + depends_on : list[str]
+  }
+
+  class PlanningOutput {
+    + goal: str
+    + tasks: list[Task]
+  }
+
+  class ClarificationOutput {
+    + desired_output: str
+    + goal: str
+    + tasks: list[dict]
+    + open_questions: list[str]
+  }
+
+  Task --> TaskType
+  PlanningOutput "1" *-- "0..*" Task
+
+  ' --- Retrieval ---
+  class Source {
+    + url: str
+    + title: str
+    + retrieved_at: str
+  }
+
+  class DataItem {
+    + content: str
+    + source: Source
+    + confidence: float
+  }
+
+  class RetrievalOutput {
+    + data: list[DataItem]
+    + sources: list[Source]
+    + query_used: str
+  }
+
+  DataItem --> Source
+  RetrievalOutput "1" *-- "0..*" DataItem
+
+  ' --- RAG ---
+  class RAGDocument {
+    + content: str
+    + source: str
+    + score: float
+    + metadata: dict
+  }
+
+  class RAGOutput {
+    + documents: list[RAGDocument]
+    + query_used: str
+    + total_indexed: int
+    + data: list[DataItem]
+  }
+
+  RAGOutput "1" *-- "0..*" RAGDocument
+
+  ' --- MCP ---
+  class MCPToolResult {
+    + tool_name: str
+    + input: str
+    + output: str
+    + success: bool
+    + error: str
+  }
+
+  class MCPOutput {
+    + results: list[MCPToolResult]
+    + data: list[DataItem]
+    + tools_used: list[str]
+    + query_used: str
+  }
+
+  MCPOutput "1" *-- "0..*" MCPToolResult
+  MCPOutput "1" *-- "0..*" DataItem
+
+  ' --- Summary ---
+  class SummaryOutput {
+    + insights: list[str]
+    + key_facts: list[str]
+    + hypotheses: list[str]
+    + gaps: list[str]
+    + confidence: float
+    + sources_used: list[str]
+  }
+
+  ' --- Research ---
+  class Hypothesis {
+    + statement: str
+    + supporting_data: list[str]
+    + is_assumption: bool
+  }
+
+  class ResearchOutput {
+    + insights: list[str]
+    + hypotheses: list[Hypothesis]
+    + assumptions: list[str]
+    + missing_information: list[str]
+  }
+
+  ResearchOutput "1" *-- "0..*" Hypothesis
+
+  ' --- Analysis ---
+  enum ConfidenceLevel {
+    low
+    medium
+    high
+  }
+
+  class KeyFinding {
+    + finding: str
+    + evidence: list[str]
+    + implication: str
+  }
+
+  class AnalysisOutput {
+    + analysis: list[str]
+    + key_findings: list[KeyFinding]
+    + confidence_level: ConfidenceLevel
+    + error: str
+  }
+
+  AnalysisOutput "1" *-- "0..*" KeyFinding
+  AnalysisOutput --> ConfidenceLevel
+
+  ' --- Admin ---
+  enum ResearchDecision {
+    sufficient
+    need_more_rag
+    need_more_mcp
+    need_more_summary
+  }
+
+  class AdminOutput {
+    + executive_summary: str
+    + key_facts: list[str]
+    + key_insights: list[str]
+    + knowledge_gaps: list[str]
+    + contradictions: list[str]
+    + decision: ResearchDecision
+    + decision_rationale: str
+    + additional_queries: list[str]
+    + confidence_score: float
+    + coverage_score: float
+    + selected_skills: list[str]
+    + selected_tools: list[str]
+  }
+
+  AdminOutput --> ResearchDecision
+
+  ' --- Validation ---
+  enum ValidationStatus {
+    PASS
+    FAIL
+  }
+
+  enum LoopBackTarget {
+    planning
+    retrieval
+    rag
+    mcp
+    summary
+    admin
+    report
+  }
+
+  class ValidationOutput {
+    + status: ValidationStatus
+    + issues: list[str]
+    + suggested_fix: str
+    + loop_back_to: LoopBackTarget
+  }
+
+  ValidationOutput --> ValidationStatus
+  ValidationOutput --> LoopBackTarget
+
+  ' --- Writing ---
+  class WritingOutput {
+    + telegram_summary: str
+    + workflow_markdown: str
+    + title: str
+    + executive_summary: str
+    + main_conclusion: str
+    + final_recommendation: str
+    + confidence_score: float
+    + findings: list[str]
+    + key_facts: list[str]
+    + knowledge_gaps: list[str]
+    + recommendation_detail: str
+    + risks: list[str]
+    + further_research: list[str]
+  }
+
+  ' --- Task Assignment ---
+  enum Priority {
+    low
+    medium
+    high
+  }
+
+  class ActionableTask {
+    + title: str
+    + description: str
+    + owner_role: str
+    + priority: Priority
+    + acceptance_criteria: list[str]
+  }
+
+  class AssignTaskOutput {
+    + tasks: list[ActionableTask]
+  }
+
+  ActionableTask --> Priority
+  AssignTaskOutput "1" *-- "0..*" ActionableTask
+}
+
+' ============================================================
+' PACKAGE: agents
+' ============================================================
+package "agents" {
+
+  abstract class BaseAgent {
+    # config: AppConfig
+    # _llm: BaseChatModel
+    # _tools: list[BaseTool]
+    # logger: Logger
+    --
+    + __init__(config, llm, tools)
+    # _load_tools() : list[BaseTool]
+    + add_tool(tool: BaseTool) : void
+    + remove_tool(name: str) : void
+    + tool_names : list[str]
+    # _uses_native_structured_output() : bool
+    # _build_chain(schema, prompt) : Chain
+    # _invoke_raw(messages) : str
+    + {abstract} run(state, extra_context) : Any
+  }
+
+  class ClarificationAgent {
+    + run(state, extra_context) : ClarificationCheck
+  }
+
+  class ClarificationCheck {
+    + needs_clarification: bool
+    + desired_output: str
+    + clarification_question: str
+    + needs_assignment: bool
+  }
+
+  class AdminAgent {
+    + run(state, extra_context) : AdminOutput
+    - _run_dispatch(state, extra_context) : AdminOutput
+    - _run_check(state, summary_output, extra_context) : AdminOutput
+  }
+
+  class RAGAgent {
+    + run(state, extra_context) : RAGOutput
+    - _run_web_search(tool, query) : list[RAGDocument]
+  }
+
+  class MCPAgent {
+    + run(state, extra_context) : MCPOutput
+  }
+
+  class SummaryAgent {
+    + run(state, extra_context) : SummaryOutput
+  }
+
+  class ValidationAgent {
+    + run(state, extra_context) : ValidationOutput
+    - _extract_output(state, phase) : dict
+  }
+
+  class ReportAgent {
+    + run(state, extra_context) : WritingOutput
+  }
+
+  class AssignTaskAgent {
+    + run(state, extra_context) : AssignTaskOutput
+  }
+
+  class ResearchAgent {
+    + run(state, extra_context) : ResearchOutput
+  }
+
+  class AnalysisAgent {
+    + run(state, extra_context) : AnalysisOutput
+  }
+
+  class InformationRetrievalAgent {
+    + run(state, extra_context) : RetrievalOutput
+  }
+
+  BaseAgent <|-- ClarificationAgent
+  BaseAgent <|-- AdminAgent
+  BaseAgent <|-- RAGAgent
+  BaseAgent <|-- MCPAgent
+  BaseAgent <|-- SummaryAgent
+  BaseAgent <|-- ValidationAgent
+  BaseAgent <|-- ReportAgent
+  BaseAgent <|-- AssignTaskAgent
+  BaseAgent <|-- ResearchAgent
+  BaseAgent <|-- AnalysisAgent
+  BaseAgent <|-- InformationRetrievalAgent
+
+  ClarificationAgent ..> ClarificationCheck : returns
+  AdminAgent ..> AdminOutput : returns
+  RAGAgent ..> RAGOutput : returns
+  MCPAgent ..> MCPOutput : returns
+  SummaryAgent ..> SummaryOutput : returns
+  ValidationAgent ..> ValidationOutput : returns
+  ReportAgent ..> WritingOutput : returns
+  AssignTaskAgent ..> AssignTaskOutput : returns
+  ResearchAgent ..> ResearchOutput : returns
+  AnalysisAgent ..> AnalysisOutput : returns
+  InformationRetrievalAgent ..> RetrievalOutput : returns
+}
+
+' ============================================================
+' PACKAGE: plan
+' ============================================================
+package "plan" {
+
+  class Plan {
+    - _tasks: dict[str, Task]
+    --
+    + tasks : list[Task]
+    + task_ids : list[str]
+    + is_empty() : bool
+    + get_task(task_id) : Task
+    + add_tasks(tasks) : void
+    + remove_task(task_id) : void
+    + to_dict() : list[dict]
+    + get_execution_order() : list[Task]
+    - _topological_sort() : list[Task]
+  }
+
+  class PlanningAgent {
+    + clarify(user_request) : ClarificationOutput
+    + plan(clarification, current_plan, max_retries) : Plan
+    + run(state, extra_context) : PlanningOutput
+    - _build_context(clarification, plan) : str
+    - _invoke_raw(messages) : str
+  }
+
+  note bottom of PlanningAgent
+    ReAct loop:
+    Thought → Action (JSON) → Observe → Retry
+    Kahn's algorithm validates DAG
+  end note
+
+  PlanningAgent ..> Plan : creates
+  PlanningAgent ..> PlanningOutput : returns
+  Plan "1" *-- "0..*" Task
+}
+
+' ============================================================
+' PACKAGE: utils
+' ============================================================
+package "utils" {
+
+  class RAGStore << (S,lightblue) Singleton >> {
+    + {static} CHUNK_SIZE: int = 512
+    + {static} CHUNK_OVERLAP: int = 64
+    + {static} SEARCH_K: int = 20
+    + {static} RERANK_TOP_N: int = 6
+    --
+    + {static} get_instance(config) : RAGStore
+    + {static} reset() : void
+    - _init_vector_store() : void
+    - _init_reranker() : void
+    - _make_id(content, source) : str
+    + add_document(content, source, metadata) : bool
+    + add_data_items(items) : int
+    + search(query, k) : list[dict]
+    + total_indexed : int
+  }
+
+  note right of RAGStore
+    Backend: Qdrant local file
+    Embedding: BAAI/bge-small-en-v1.5
+    Reranking: Flashrank
+  end note
+
+  class SkillRegistry {
+    - _tools: dict[str, BaseTool]
+    --
+    + register(tool_or_func, name, description) : BaseTool
+    + unregister(name) : void
+    + get(name) : BaseTool
+    + all() : list[BaseTool]
+    + names() : list[str]
+  }
+
+  class InventoryItem << (T,orchid) TypedDict >> {
+    + name: str
+    + description: str
+    + when_to_use: str
+  }
+
+  class Inventory {
+    + {static} SKILLS_INVENTORY: list[InventoryItem]
+    + {static} MCP_INVENTORY: list[InventoryItem]
+    --
+    + get_skills_summary() : str
+    + get_mcp_summary() : str
+    + get_inventory_context() : str
+  }
+
+  class FileWriter {
+    + {static} write_workflow_file(report, timestamp) : Path
+    + {static} write_report_docx(report, timestamp) : Path
+    + {static} write_all(report) : tuple[Path, Path]
+  }
+
+  note right of FileWriter
+    outputs/workflow_YYYYMMDD.md
+    outputs/report_YYYYMMDD.docx
+  end note
+
+  Inventory "1" *-- "0..*" InventoryItem
+  FileWriter ..> WritingOutput : reads
+}
+
+' ============================================================
+' PACKAGE: skills
+' ============================================================
+package "skills" {
+
+  class WebSearchSkill {
+    + name: str = "web_search"
+    + {static} _web_search(query, num_results) : str
+  }
+
+  note bottom of WebSearchSkill
+    SerpAPI / Google Search
+    Auto-registered on import
+    Requires: SERPAPI_API_KEY
+  end note
+}
+
+' ============================================================
+' PACKAGE: prompts
+' ============================================================
+package "prompts" {
+
+  class Prompts << (M,lightgreen) module >> {
+    + CLARIFICATION_PROMPT
+    + PLANNING_PROMPT
+    + ADMIN_DISPATCH_PROMPT
+    + ADMIN_CHECK_PROMPT
+    + RAG_SYSTEM_PROMPT
+    + MCP_EXTRACTION_PROMPT
+    + SUMMARY_SYSTEM_PROMPT
+    + RESEARCH_SYSTEM_PROMPT
+    + ANALYSIS_SYSTEM_PROMPT
+    + REPORT_SYSTEM_PROMPT
+    + VALIDATION_SYSTEM_PROMPT
+    + TASK_ASSIGNMENT_SYSTEM_PROMPT
+    + RETRIEVAL_SYSTEM_PROMPT
+  }
+}
+
+' ============================================================
+' PACKAGE: orchestrator
+' ============================================================
+package "orchestrator" {
+
+  class NodeFunctions << (M,lightgreen) module >> {
+    - _agent_cache: dict[str, Any]
+    --
+    - _cfg(config) : AppConfig
+    - _get_agent(cls, config) : Agent
+    - _get_validation_critique(state, phase) : str
+    - _trace(agent, reasoning, output_summary) : dict
+    --
+    + clarify_node(state, config) : dict
+    + plan_node(state, config) : dict
+    + rag_node(state, config) : dict
+    + mcp_node(state, config) : dict
+    + summary_node(state, config) : dict
+    + validate_node(state, config) : dict
+    + admin_node(state, config) : dict
+    + report_node(state, config) : dict
+    + assign_task_node(state, config) : dict
+  }
+
+  class RoutingFunctions << (M,lightgreen) module >> {
+    + route_after_clarify(state) : str
+    + route_after_admin_dispatch(state) : list[Send]
+    + route_after_validation(state) : str
+    + route_after_admin_check(state) : str | list
+    + route_after_report(state) : str
+  }
+
+  class LangGraph << (G,salmon) StateGraph >> {
+    + nodes: clarify, plan, admin_dispatch,\n  rag, mcp, validate, summary,\n  admin_check, report, assign_task
+    --
+    + build_graph(config, checkpointer) : CompiledGraph
+  }
+
+  class OrchestratorRunner {
+    - graph: CompiledGraph
+    - config: AppConfig
+    --
+    + __init__(config)
+    + invoke(problem, desired_output) : GraphState
+    + invoke_interactive(problem, ask_fn) : GraphState
+    + stream(problem, desired_output) : AsyncIterator
+    + run(problem, desired_output) : GraphState
+    + stream_to_console(problem) : dict
+    - _build_initial_state(problem, config, desired_output) : dict
+  }
+
+  NodeFunctions --> LangGraph : registers nodes
+  RoutingFunctions --> LangGraph : registers edges
+  OrchestratorRunner --> LangGraph : invokes
+}
+
+' ============================================================
+' LANGGRAPH FLOW (Activity/Sequence style)
+' ============================================================
+package "Graph Flow" {
+
+  rectangle "START" as GS #2ECC71
+  rectangle "clarify" as GCL #3498DB
+  rectangle "plan" as GPL #3498DB
+  rectangle "admin_dispatch\n(Mode 1)" as GAD #E67E22
+  rectangle "rag" as GRAG #9B59B6
+  rectangle "mcp" as GMCP #9B59B6
+  rectangle "validate" as GVL #E74C3C
+  rectangle "summary" as GSM #1ABC9C
+  rectangle "admin_check\n(Mode 2)" as GAC #E67E22
+  rectangle "report" as GRP #3498DB
+  rectangle "assign_task" as GAT #3498DB
+  rectangle "END" as GE #E74C3C
+
+  GS --> GCL
+  GCL --> GPL : clear
+  GCL --> GE : needs_clarification
+  GPL --> GAD
+  GAD --> GRAG : always (Send)
+  GAD --> GMCP : if selected_tools (Send)
+  GRAG --> GVL
+  GMCP --> GVL
+  GVL --> GSM : PASS (from rag/mcp)
+  GVL --> GAC : PASS (from summary)
+  GVL --> GRP : PASS (from admin_check sufficient)
+  GVL --> GRAG : FAIL loop_back=rag
+  GVL --> GMCP : FAIL loop_back=mcp
+  GVL --> GSM : FAIL loop_back=summary (max retries)
+  GSM --> GVL
+  GAC --> GRP : sufficient
+  GAC --> GRAG : need_more_rag (Send)
+  GAC --> GMCP : need_more_mcp (Send)
+  GAC --> GSM : need_more_summary
+  GRP --> GVL
+  GVL --> GAT : needs_assignment
+  GVL --> GE : done
+  GAT --> GE
+}
+
+' ============================================================
+' CROSS-PACKAGE RELATIONSHIPS
+' ============================================================
+
+BaseAgent --> AppConfig : uses
+BaseAgent --> SkillRegistry : loads skills
+AdminAgent --> Inventory : reads inventory
+RAGAgent --> RAGStore : searches
+NodeFunctions --> FileWriter : calls write_all
+NodeFunctions --> RAGStore : resets on plan
+
+ClarificationAgent --> Prompts : CLARIFICATION_PROMPT
+PlanningAgent --> Prompts : PLANNING_PROMPT
+AdminAgent --> Prompts : ADMIN_DISPATCH_PROMPT\nADMIN_CHECK_PROMPT
+RAGAgent --> Prompts : RAG_SYSTEM_PROMPT
+MCPAgent --> Prompts : MCP_EXTRACTION_PROMPT
+SummaryAgent --> Prompts : SUMMARY_SYSTEM_PROMPT
+ValidationAgent --> Prompts : VALIDATION_SYSTEM_PROMPT
+ReportAgent --> Prompts : REPORT_SYSTEM_PROMPT
+AssignTaskAgent --> Prompts : TASK_ASSIGNMENT_SYSTEM_PROMPT
+
+NodeFunctions --> ClarificationAgent : instantiates
+NodeFunctions --> PlanningAgent : instantiates
+NodeFunctions --> AdminAgent : instantiates
+NodeFunctions --> RAGAgent : instantiates
+NodeFunctions --> MCPAgent : instantiates
+NodeFunctions --> SummaryAgent : instantiates
+NodeFunctions --> ValidationAgent : instantiates
+NodeFunctions --> ReportAgent : instantiates
+NodeFunctions --> AssignTaskAgent : instantiates
+
+GraphState --> PlanningOutput : plan
+GraphState --> RAGOutput : rag_output
+GraphState --> MCPOutput : mcp_output
+GraphState --> SummaryOutput : summary_output
+GraphState --> ValidationOutput : validation_output
+GraphState --> AdminOutput : admin_output
+GraphState --> WritingOutput : report_output
+GraphState --> AssignTaskOutput : assign_output
+
+SkillRegistry "1" *-- "0..*" WebSearchSkill : registered skill
+
+@enduml

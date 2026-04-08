@@ -7,7 +7,8 @@ class DevOpsEngineer(BaseRole):
     role_name: str = "DevOpsEngineer"
     mention: str = "/devops"
     description: str = (
-        "DevOps Engineer — thiết kế CI/CD pipeline, infrastructure, "
-        "Docker/Kubernetes config, monitoring và deployment strategy."
+        "DevOps Engineer — designs CI/CD pipelines, infrastructure as code, "
+        "Docker/Kubernetes configuration, monitoring, and deployment strategy."
     )
     skill_file: str = "devops_skill.md"
+    api_docs: list[str] = ["python_dotenv", "rich", "structlog"]

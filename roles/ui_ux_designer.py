@@ -7,7 +7,7 @@ class UIUXDesigner(BaseRole):
     role_name: str = "UIUXDesigner"
     mention: str = "/uiux"
     description: str = (
-        "UI/UX Designer — thiết kế giao diện người dùng và trải nghiệm, "
-        "tạo wireframes, design system và UX guidelines."
+        "UI/UX Designer — designs user interfaces and experiences, "
+        "creates wireframes, design systems, and UX guidelines."
     )
     skill_file: str = "uiux_skill.md"

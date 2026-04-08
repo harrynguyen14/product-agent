@@ -16,17 +16,17 @@ class RolePlanner(BaseRole):
     role_name: str = "Planner"
     mention: str = "/planner"
     description: str = (
-        "Chuyên gia lập kế hoạch kỹ thuật — phân tích yêu cầu và tạo task plan "
-        "chi tiết với role assignments và dependencies."
+        "Technical Planner — analyzes requirements and produces a detailed task plan "
+        "with role assignments and dependencies."
     )
     skill_file: str = "planner_skill.md"
 
     async def generate_plan(self, requirement: str) -> list[dict[str, Any]]:
         """Generate a structured plan as a list of task dicts."""
         prompt = (
-            f"## Yêu cầu dự án\n{requirement}\n\n"
-            "Hãy tạo một plan chi tiết cho dự án này. "
-            "Output PHẢI là JSON array theo đúng format được định nghĩa trong skill."
+            f"## Project Requirement\n{requirement}\n\n"
+            "Create a detailed plan for this project. "
+            "Output MUST be a JSON array following the format defined in the skill."
         )
         raw = await self.respond(prompt)
 

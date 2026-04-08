@@ -7,7 +7,7 @@ class Reporter(BaseRole):
     role_name: str = "Reporter"
     mention: str = "/report"
     description: str = (
-        "Reporter — tổng hợp output từ tất cả các roles thành tài liệu "
-        "project hoàn chỉnh, rõ ràng và dễ đọc cho stakeholders."
+        "Reporter — synthesizes outputs from all roles into a complete, "
+        "clear, and readable project document for stakeholders. Responds in Vietnamese."
     )
     skill_file: str = "reporter_skill.md"

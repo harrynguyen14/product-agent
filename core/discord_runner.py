@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Optional
 
 from actions.action import LLMCallable
 from config.settings import AppConfig
-from core.llm_factory import LLMFactory
+from core.llm_factory import LLMFactory, MultiModelSet
 from flows.ba_flow import BAFlow
 from flows.pd_flow import PDFlow
 from flows.planning_flow import PlanningFlow
@@ -67,6 +67,17 @@ class DiscordEnvironmentRunner:
         from infrastructure.token_tracker import TokenTracker
         self.token_tracker = TokenTracker()
 
+        # Multi-model set (None = single-model mode, backward compatible)
+        multi_set: Optional[MultiModelSet] = None
+        if getattr(config, "multi_model_enabled", False):
+            multi_set = LLMFactory.build_multi(config)
+            logger.info(
+                "multi_model_enabled",
+                claude=config.anthropic_multi_provider,
+                gemini25=config.gemini_reasoning_provider,
+                gemini20=config.gemini_fast_provider,
+            )
+
         # Load default tools (web_search) and inject into all roles
         from tools.registry import build_default_registry as build_tool_registry
         _tool_registry = build_tool_registry()
@@ -75,6 +86,9 @@ class DiscordEnvironmentRunner:
             tools=_tool_registry.all_tools(),
             tracker=self.token_tracker,
             raw_llm=self._raw_llm,
+            multi_model_set=multi_set,
+            history_window=getattr(config, "role_history_window", 10),
+            react_history_window=getattr(config, "role_react_history_window", 6),
         )
 
     # ------------------------------------------------------------------
@@ -230,6 +244,7 @@ class DiscordEnvironmentRunner:
             be_dev=self._registry.get("BackendDev") if "BackendDev" in roles_set else None,
             tester=self._registry.get("Tester") if "Tester" in roles_set else None,
             reporter=self._registry.get("Reporter"),
+            compress_phases=getattr(self.config, "compress_phases", False),
         )
 
         all_outputs: dict[str, str] = {}
@@ -243,9 +258,16 @@ class DiscordEnvironmentRunner:
             "PM_closing",
             all_outputs.get("FinalReport", "Dự án đã hoàn thành."),
         )
-        token_report = self.token_tracker.format_report(
-            model=self.config.get_active_model() if hasattr(self.config, "get_active_model") else ""
-        )
+        # Build model label for token report
+        if getattr(self.config, "multi_model_enabled", False):
+            model_label = (
+                f"multi-model | claude: {self.config.anthropic_multi_provider} "
+                f"| gemini25: {self.config.gemini_reasoning_provider} "
+                f"| gemini20: {self.config.gemini_fast_provider}"
+            )
+        else:
+            model_label = self.config.get_active_model() if hasattr(self.config, "get_active_model") else ""
+        token_report = self.token_tracker.format_report(model=model_label)
         yield {
             "type": "execution_done",
             "summary": summary,

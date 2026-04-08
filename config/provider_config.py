@@ -43,6 +43,24 @@ class ProviderConfig(BaseSettings):
     top_p: float = 1.0
     timeout: int = 300
 
+    # --- Multi-model routing (off by default) ---
+    # When True, each role uses its designated model group instead of a single LLM.
+    # Requires MA_ANTHROPIC_API_KEY + MA_GEMINI_API_KEY to both be set.
+    multi_model_enabled: bool = Field(default=False)
+    # Anthropic model used for code-heavy roles (Arch, BE, FE, Security)
+    anthropic_multi_provider: str = Field(default="claude-sonnet-4-6")
+    # Fast Gemini model used for lightweight roles (UIUX, DevOps, Tester, Reporter)
+    gemini_fast_provider: str = Field(default="gemini-2.0-flash")
+    # Reasoning Gemini model used for orchestrator roles (PM, BA, PD, Planner)
+    gemini_reasoning_provider: str = Field(default="gemini-2.5-flash-preview-04-17")
+
+    # --- Token optimization ---
+    # When True, PM summarizes each phase output before passing to next phase
+    compress_phases: bool = Field(default=False)
+    # Max conversation turns kept in role history (sliding window)
+    role_history_window: int = Field(default=10)
+    role_react_history_window: int = Field(default=6)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="MA_",

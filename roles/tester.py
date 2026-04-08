@@ -7,7 +7,8 @@ class Tester(BaseRole):
     role_name: str = "Tester"
     mention: str = "/qa"
     description: str = (
-        "Tester (QA Engineer) — lập test plan, thiết kế test cases, "
-        "báo cáo bugs và đảm bảo chất lượng phần mềm."
+        "Tester (QA Engineer) — creates test plans, designs test cases, "
+        "reports bugs, and ensures software quality."
     )
     skill_file: str = "tester_skill.md"
+    extra_skills: list[str] = ["agent_evaluation_skill.md"]

@@ -62,6 +62,7 @@ class ProductFlow:
         be_dev: Optional[BackendDev] = None,
         tester: Optional[Tester] = None,
         reporter: Optional[Reporter] = None,
+        compress_phases: bool = False,
     ) -> None:
         self._pm = pm
         self._ba = ba
@@ -74,6 +75,7 @@ class ProductFlow:
         self._be = be_dev
         self._tester = tester
         self._reporter = reporter or ba  # fallback: BA writes report
+        self._compress_phases = compress_phases
 
     # ------------------------------------------------------------------
     # Public stream API
@@ -102,14 +104,20 @@ class ProductFlow:
 
         ba_output = outputs.get("BusinessAnalyst", "")
 
+        # Optionally compress BA output before passing to Phase 2 + 3
+        ba_for_next = await self._compress("Business Analysis", ba_output) if self._compress_phases else ba_output
+
         # ── Phase 2: UI/UX Design ───────────────────────────────────────
-        async for event in self._phase_uiux(requirement, ba_output, outputs):
+        async for event in self._phase_uiux(requirement, ba_for_next, outputs):
             yield event
 
         uiux_output = outputs.get("UIUXDesigner", "")
 
+        # Optionally compress UIUX output before passing to Phase 3
+        uiux_for_next = await self._compress("UI/UX Design", uiux_output) if self._compress_phases else uiux_output
+
         # ── Phase 3: Development ────────────────────────────────────────
-        async for event in self._phase_dev(requirement, ba_output, uiux_output, plan_context, outputs):
+        async for event in self._phase_dev(requirement, ba_for_next, uiux_for_next, plan_context, outputs):
             yield event
 
         dev_summary = outputs.get("ProjectDeveloper_report", "")
@@ -278,18 +286,13 @@ class ProductFlow:
 
             # Run dev team under PD supervision
             dev_outputs: dict[str, str] = {}
-            context_base = (
-                f"## Yêu cầu dự án\n{requirement}\n\n"
-                f"## BA Spec\n{ba_output}\n\n"
-                f"## UI/UX Design\n{uiux_output}\n\n"
-                + (f"## Kế hoạch tổng thể\n{plan_context}\n\n" if plan_context else "")
-            )
 
             # Step 1: Architecture
             if self._arch:
+                arch_ctx = self._dev_context("SoftwareArchitect", requirement, ba_output, uiux_output, "", plan_context)
                 yield {"type": "role_start", "role": "ProjectDeveloper"}
                 pd_arch_task = await self._pd.run_task(
-                    f"{context_base}"
+                    f"{arch_ctx}\n\n"
                     "Giao task cho SoftwareArchitect: thiết kế kiến trúc hệ thống tổng thể, "
                     "tech stack, system diagram, data flow, database design."
                 )
@@ -297,7 +300,7 @@ class ProductFlow:
 
                 yield {"type": "role_start", "role": "SoftwareArchitect"}
                 arch_output = await self._arch.run_task(
-                    f"## Nhiệm vụ từ ProjectDeveloper\n{pd_arch_task}\n\n{context_base}"
+                    f"## Nhiệm vụ từ ProjectDeveloper\n{pd_arch_task}\n\n{arch_ctx}\n\n"
                     "Thiết kế kiến trúc hệ thống tổng thể."
                 )
                 dev_outputs["SoftwareArchitect"] = arch_output
@@ -313,17 +316,15 @@ class ProductFlow:
             else:
                 arch_output = ""
 
-            arch_ctx = f"\n\n## Kiến trúc hệ thống\n{arch_output}" if arch_output else ""
-
-            # Step 2: Security + DevOps (parallel)
+            # Step 2: Security + DevOps (parallel, filtered context)
             phase2_coros = []
             phase2_keys = []
 
             if self._security:
                 phase2_coros.append(
                     self._security.run_task(
-                        f"{context_base}{arch_ctx}\n"
-                        "Hãy thực hiện security review và threat modeling."
+                        self._dev_context("SecuritySpecialist", requirement, ba_output, uiux_output, arch_output, plan_context)
+                        + "\nHãy thực hiện security review và threat modeling."
                     )
                 )
                 phase2_keys.append("SecuritySpecialist")
@@ -332,8 +333,8 @@ class ProductFlow:
             if self._devops:
                 phase2_coros.append(
                     self._devops.run_task(
-                        f"{context_base}{arch_ctx}\n"
-                        "Hãy thiết kế CI/CD pipeline và infrastructure."
+                        self._dev_context("DevOpsEngineer", requirement, ba_output, uiux_output, arch_output, plan_context)
+                        + "\nHãy thiết kế CI/CD pipeline và infrastructure."
                     )
                 )
                 phase2_keys.append("DevOpsEngineer")
@@ -345,31 +346,28 @@ class ProductFlow:
                     dev_outputs[key] = result
                     yield {"type": "role_done", "role": key, "output": result}
 
-            security_ctx = (
-                f"\n\n## Security Review\n{dev_outputs.get('SecuritySpecialist', '')}"
-                if "SecuritySpecialist" in dev_outputs else ""
-            )
+            security_output = dev_outputs.get("SecuritySpecialist", "")
 
-            # Step 3: FE + BE (parallel)
+            # Step 3: FE + BE (parallel, filtered context)
             phase3_coros = []
             phase3_keys = []
 
             if self._fe:
+                fe_ctx = self._dev_context("FrontendDev", requirement, ba_output, uiux_output, arch_output, plan_context)
+                if security_output:
+                    fe_ctx += f"\n\n## Security Guidelines\n{security_output}"
                 phase3_coros.append(
-                    self._fe.run_task(
-                        f"{context_base}{arch_ctx}{security_ctx}\n"
-                        "Implement frontend theo design spec và kiến trúc đã định."
-                    )
+                    self._fe.run_task(fe_ctx + "\nImplement frontend theo design spec và kiến trúc đã định.")
                 )
                 phase3_keys.append("FrontendDev")
                 yield {"type": "role_start", "role": "FrontendDev"}
 
             if self._be:
+                be_ctx = self._dev_context("BackendDev", requirement, ba_output, uiux_output, arch_output, plan_context)
+                if security_output:
+                    be_ctx += f"\n\n## Security Guidelines\n{security_output}"
                 phase3_coros.append(
-                    self._be.run_task(
-                        f"{context_base}{arch_ctx}{security_ctx}\n"
-                        "Implement backend API và database theo kiến trúc đã định."
-                    )
+                    self._be.run_task(be_ctx + "\nImplement backend API và database theo kiến trúc đã định.")
                 )
                 phase3_keys.append("BackendDev")
                 yield {"type": "role_start", "role": "BackendDev"}
@@ -380,12 +378,13 @@ class ProductFlow:
                     dev_outputs[key] = result
                     yield {"type": "role_done", "role": key, "output": result}
 
-            # Step 4: Tester
+            # Step 4: Tester (filtered context: BA AC + arch only)
             if self._tester:
                 yield {"type": "role_start", "role": "Tester"}
+                tester_ctx = self._dev_context("Tester", requirement, ba_output, uiux_output, arch_output, plan_context)
                 all_impl = "\n\n".join(f"## {k}\n{v}" for k, v in dev_outputs.items())
                 tester_output = await self._tester.run_task(
-                    f"{context_base}\n\n## Toàn bộ implementation\n{all_impl}\n\n"
+                    f"{tester_ctx}\n\n## Toàn bộ implementation\n{all_impl}\n\n"
                     "Lập test plan và viết test cases toàn diện."
                 )
                 dev_outputs["Tester"] = tester_output
@@ -484,6 +483,58 @@ class ProductFlow:
             outputs["PM_feedback_report"] = pm_review
 
         yield {"type": "phase_done", "phase": "4", "name": "Final Report"}
+
+
+    # ------------------------------------------------------------------
+    # Token optimization helpers
+    # ------------------------------------------------------------------
+
+    async def _compress(self, phase_name: str, output: str, word_limit: int = 300) -> str:
+        """Ask PM to summarize a phase output to ~word_limit words.
+
+        Used when compress_phases=True to reduce token usage passed between phases.
+        """
+        return await self._pm.run_task(
+            f"Tóm tắt output của phase '{phase_name}' dưới đây trong khoảng {word_limit} từ. "
+            f"Giữ lại các thông tin kỹ thuật và nghiệp vụ quan trọng nhất, bỏ phần mô tả thừa:\n\n{output}"
+        )
+
+    @staticmethod
+    def _dev_context(
+        role: str,
+        requirement: str,
+        ba_output: str,
+        uiux_output: str,
+        arch_output: str,
+        plan_context: str,
+    ) -> str:
+        """Return only the context sections relevant to a specific dev role.
+
+        Smart filtering: each role receives only what it actually needs,
+        avoiding sending the full combined context (~5000+ tokens) to everyone.
+        """
+        req = f"## Yêu cầu dự án\n{requirement}"
+        arch = f"## Kiến trúc hệ thống\n{arch_output}" if arch_output else ""
+        ba = f"## BA Spec\n{ba_output}" if ba_output else ""
+        uiux = f"## UI/UX Design\n{uiux_output}" if uiux_output else ""
+        plan = f"## Kế hoạch tổng thể\n{plan_context}" if plan_context else ""
+
+        role_parts: dict[str, list[str]] = {
+            # Arch needs full picture to design the system
+            "SoftwareArchitect":  [req, ba, uiux, plan],
+            # Security needs BA (rules/auth) + arch, not UIUX wireframes
+            "SecuritySpecialist": [req, ba, arch, plan],
+            # DevOps only needs arch to set up infra/CI, not BA/UIUX details
+            "DevOpsEngineer":     [req, arch, plan],
+            # FE needs UIUX design + arch API contract, not BA business rules detail
+            "FrontendDev":        [req, uiux, arch, plan],
+            # BE needs BA spec + arch, not UIUX wireframes
+            "BackendDev":         [req, ba, arch, plan],
+            # Tester needs BA acceptance criteria + arch, not UIUX markup
+            "Tester":             [req, ba, arch],
+        }
+        parts = role_parts.get(role, [req, arch])
+        return "\n\n".join(p for p in parts if p)
 
 
 # ------------------------------------------------------------------

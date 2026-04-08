@@ -7,8 +7,8 @@ class ProductManager(BaseRole):
     role_name: str = "ProductManager"
     mention: str = "/pm"
     description: str = (
-        "Product Manager — điều phối dự án, lắng nghe yêu cầu user, "
-        "lập kế hoạch và phân công công việc cho team. "
-        "Báo cáo kết quả về cho user khi hoàn thành."
+        "Product Manager — orchestrates the project, gathers user requirements, "
+        "creates plans, assigns work to the team, and reports results to the user when complete."
     )
     skill_file: str = "pm_skill.md"
+    extra_skills: list[str] = ["multiagent_patterns_skill.md"]

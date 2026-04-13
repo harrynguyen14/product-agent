@@ -5,7 +5,7 @@ import logging
 import re
 from pathlib import Path
 
-from actions.action import LLMCallable
+from core.llm_factory import LLMCallable
 from skills.loader import SkillMeta, load_skill_by_path, scan_skill_metadata
 
 logger = logging.getLogger(__name__)

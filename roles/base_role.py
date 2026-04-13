@@ -1,29 +1,23 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
-from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-from actions.action import LLMAction, LLMCallable
+from core.llm_factory import LLMCallable
 from skills.loader import load_api_doc, load_skill
 
 __all__ = ["BaseRole"]
 
 
 class BaseRole(BaseModel):
-    """Persona-based role that participates in a multi-agent conversation.
+    """Persona-based role trong multi-agent Telegram system.
 
-    Each subclass declares:
-        role_name   : Display name shown in Discord messages (e.g. "ProductManager")
-        mention     : Slash-command trigger in task channels (e.g. "/pm")
-        skill_file  : Markdown file in skills/ that defines how this role behaves
-        description : One-line description of responsibilities
-
-    Skill loading — two layers:
-        static  : skill_file + extra_skills — always loaded at prompt build time
-        dynamic : select_skills() — LLM picks relevant shared/ skills just-in-time
-                  based on the current task. Disabled when enable_skill_selection=False.
+    Mỗi subclass khai báo:
+        role_name  : Tên hiển thị (e.g. "ProductManager")
+        mention    : Slug dùng trong config (e.g. "pm")
+        skill_file : Markdown file trong skills/ định nghĩa hành vi
+        description: Mô tả ngắn nhiệm vụ
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -36,14 +30,11 @@ class BaseRole(BaseModel):
     api_docs: list[str] = Field(default_factory=list)
     enable_skill_selection: bool = True
     max_dynamic_skills: int = 3
-    max_react_steps: int = 6
     history_window: int = 10
-    react_history_window: int = 6
 
-    _llm: Optional[LLMCallable] = None
-    _skill_content: str = ""
-    _history: list[dict[str, str]] = Field(default_factory=list)
-    _tools: list[BaseTool] = Field(default_factory=list)
+    _llm: Optional[LLMCallable] = PrivateAttr(default=None)
+    _skill_content: str = PrivateAttr(default="")
+    _history: list[dict[str, str]] = PrivateAttr(default_factory=list)
 
     @model_validator(mode="after")
     def _set_defaults(self) -> "BaseRole":
@@ -55,14 +46,9 @@ class BaseRole(BaseModel):
         self._llm = llm
         return self
 
-    def set_tools(self, tools: list[BaseTool]) -> "BaseRole":
-        object.__setattr__(self, "_tools", list(tools))
-        return self
-
     def _build_static_prompt(self) -> str:
-        base = (
-            f"You are {self.role_name}. {self.description}"
-        )
+        base = f"You are {self.role_name}. {self.description}"
+
         if not self.skill_file:
             role_skill = base
         else:
@@ -85,11 +71,6 @@ class BaseRole(BaseModel):
             if doc_sections:
                 docs_block = "\n\n---\n\n".join(doc_sections)
                 role_skill = f"{role_skill}\n\n---\n\n## Library Documentation\n\n{docs_block}"
-
-        if self._tools:
-            search_skill = load_skill("role_search_skill.md")
-            if search_skill:
-                return f"{search_skill}\n\n---\n\n{role_skill}"
 
         return role_skill
 
@@ -124,46 +105,7 @@ class BaseRole(BaseModel):
     async def respond(self, user_message: str, context: str = "") -> str:
         if self._llm is None:
             raise RuntimeError(f"[{self.role_name}] LLM not injected")
-
-        if self._tools:
-            return await self._respond_with_tools(user_message, context)
         return await self._respond_plain(user_message, context)
-
-    async def _respond_with_tools(self, user_message: str, context: str) -> str:
-        from actions.action import LLMAction
-        from actions.react_loop import ReActLoop
-
-        action = LLMAction()
-        action.set_llm(self._llm)
-
-        history_str = ""
-        if self._history:
-            history_str = "\n".join(
-                f"{'User' if e['role'] == 'user' else self.role_name}: {e['content']}"
-                for e in self._history[-self.react_history_window:]
-            )
-
-        full_context = "\n\n".join(filter(None, [
-            f"## Conversation history\n{history_str}" if history_str else "",
-            f"## Context from previous roles\n{context}" if context else "",
-        ]))
-
-        system_prompt = await self._build_dynamic_prompt(user_message)
-
-        loop = ReActLoop(
-            action=action,
-            tools=self._tools,
-            max_steps=self.max_react_steps,
-            system_msg=system_prompt,
-        )
-
-        result = await loop.run(goal=user_message, context=full_context)
-        response = result.answer
-
-        self.add_to_history("user", user_message)
-        self.add_to_history("assistant", response)
-
-        return response
 
     async def _respond_plain(self, user_message: str, context: str) -> str:
         import asyncio

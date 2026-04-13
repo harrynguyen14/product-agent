@@ -40,9 +40,6 @@ aiosqlite>=0.20.0
 # Telegram bot
 python-telegram-bot>=21.0.0
 
-# Discord bot
-discord.py>=2.3.0
-
 # RAG stack — Qdrant + fastembed + reranking
 qdrant-client>=1.9.0
 langchain-qdrant>=0.2.0

@@ -54,6 +54,15 @@ class ProviderConfig(BaseSettings):
     # Reasoning Gemini model used for orchestrator roles (PM, BA, PD, Planner)
     gemini_reasoning_provider: str = Field(default="gemini-2.5-flash-preview-04-17")
 
+    # --- Fallback provider (used when a role's designated API key is missing) ---
+    # If set, roles whose primary API key is unavailable will fall back to this provider.
+    # Supported values: "openai", "anthropic", "gemini", "ollama", "lmstudio"
+    fallback_provider: str = Field(default="")
+    # API key for the fallback provider (required when fallback_provider is set)
+    fallback_api_key: str = Field(default="")
+    # Model name for the fallback provider (optional — defaults to provider's default model)
+    fallback_model: str = Field(default="")
+
     # --- Token optimization ---
     # When True, PM summarizes each phase output before passing to next phase
     compress_phases: bool = Field(default=False)

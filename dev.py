@@ -1,17 +1,16 @@
-"""Hot-reload dev runner for the Discord bot.
+"""Hot-reload dev runner cho Telegram bot.
 
 Watches all .py files in the project. On any change, kills the current
 bot process and restarts it automatically.
 
 Usage:
-    uv run python dev.py discord [--provider gemini] [--model ...]
-    uv run python dev.py telegram [--provider gemini]
+    uv run python dev.py telegram [--provider gemini] [--token TOKEN]
     uv run python dev.py run "your requirement"  # CLI pipeline
 
 Pass any extra flags after the command — they are forwarded to main.py.
 
 Example:
-    uv run python dev.py discord --provider gemini --log-level DEBUG
+    uv run python dev.py telegram --provider gemini --log-level DEBUG
 """
 from __future__ import annotations
 
